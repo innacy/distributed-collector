@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/caio/go-tdigest/v4 v4.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/eapache/go-resiliency v1.7.0 // indirect
