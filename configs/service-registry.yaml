@@ -1,0 +1,41 @@
+services:
+  payment-service:
+    team: payments
+    tier: critical
+    sla: "99.99"
+  auth-service:
+    team: platform
+    tier: critical
+    sla: "99.99"
+  user-service:
+    team: platform
+    tier: standard
+    sla: "99.9"
+  notification-service:
+    team: comms
+    tier: standard
+    sla: "99.5"
+  analytics-service:
+    team: data
+    tier: debug
+    sla: "95.0"
+  search-service:
+    team: discovery
+    tier: standard
+    sla: "99.9"
+  inventory-service:
+    team: supply-chain
+    tier: critical
+    sla: "99.99"
+  shipping-service:
+    team: logistics
+    tier: standard
+    sla: "99.5"
+  recommendation-service:
+    team: ml
+    tier: debug
+    sla: "95.0"
+  gateway-service:
+    team: platform
+    tier: critical
+    sla: "99.99"
