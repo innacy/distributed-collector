@@ -98,9 +98,9 @@ DLQ topics branch off at each stage for failed events.
 
 ### Aggregator
 
-- Maintains in-memory sliding windows (per service, per minute):
+- Maintains in-memory tumbling windows (per service, per minute — window resets each minute boundary):
   - Event count by level
-  - P50, P95, P99 latency (from `metadata.latency_ms`)
+  - P50, P95, P99 latency (from `metadata.latency_ms`) using T-Digest approximation
   - Error rate (ERROR+FATAL / total)
   - Top error codes
   - Unique endpoints seen
@@ -168,9 +168,9 @@ Kafka Consumer (1 goroutine/partition)
 ```go
 type ErrorClass int
 const (
-    Permanent ErrorClass = iota  // schema violations — no retry
-    Transient                     // timeouts, connection issues — retry with backoff
-    RateLimited                   // backoff required
+    Permanent ErrorClass = iota  // schema violations — no retry, immediate DLQ
+    Transient                     // timeouts, connection issues — retry with exponential backoff
+    RateLimited                   // upstream/downstream rate limit hit — retry with longer, fixed-interval backoff (5s)
 )
 ```
 
