@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: raw-store-writer
+  namespace: distributed-collector
+  labels:
+    app: raw-store-writer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: raw-store-writer
+  template:
+    metadata:
+      labels:
+        app: raw-store-writer
+    spec:
+      containers:
+        - name: raw-store-writer
+          image: distributed-collector-raw-store-writer:latest
+          envFrom:
+            - configMapRef:
+                name: pipeline-config
+          env:
+            - name: SERVICE_NAME
+              value: "raw-store-writer"
+            - name: CONSUMER_GROUP
+              value: "raw-store-writer-group"
+            - name: INPUT_TOPIC
+              value: "enriched-logs"
+            - name: DLQ_TOPIC
+              value: "dlq-write-failed"
+            - name: BATCH_SIZE
+              value: "1000"
+            - name: FLUSH_INTERVAL_SEC
+              value: "5"
+            - name: HTTP_PORT
+              value: "8081"
+          ports:
+            - containerPort: 8081
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: raw-store-writer-hpa
+  namespace: distributed-collector
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: raw-store-writer
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: pipeline_consumer_lag
+        target:
+          type: AverageValue
+          averageValue: "10000"

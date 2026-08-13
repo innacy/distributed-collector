@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipeline-config
+  namespace: distributed-collector
+data:
+  KAFKA_BROKERS: "kafka-cluster-kafka-bootstrap.distributed-collector.svc:9092"
+  MONGO_URI: "mongodb://mongodb-0.mongodb.distributed-collector.svc:27017,mongodb-1.mongodb.distributed-collector.svc:27017,mongodb-2.mongodb.distributed-collector.svc:27017/?replicaSet=rs0"
+  MONGO_DATABASE: "distributed-collector"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector.distributed-collector.svc:4317"
+  WORKER_POOL_SIZE: "64"
+  BATCH_SIZE: "1000"
+  FLUSH_INTERVAL_SEC: "10"
+  CHANNEL_BUFFER: "64"
