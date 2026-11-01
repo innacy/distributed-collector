@@ -14,7 +14,7 @@ services:
     depends_on:
       - zookeeper
     ports:
-      - "9092:9092"
+      - "9082:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -27,7 +27,7 @@ services:
   mongodb:
     image: mongo:7.0
     ports:
-      - "27017:27017"
+      - "27027:27017"
     volumes:
       - mongo-data:/data/db
 
@@ -120,7 +120,7 @@ services:
       INPUT_TOPIC: enriched-logs
       CONSUMER_GROUP: raw-store-writer-group
       DLQ_TOPIC: dlq-write-failed
-      MONGO_URI: mongodb://mongodb:27017
+      MONGO_URI: mongodb://mongodb:27027
       MONGO_DATABASE: distributed-collector
       OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
       SERVICE_NAME: raw-store-writer
