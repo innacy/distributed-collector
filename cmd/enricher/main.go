@@ -14,6 +14,7 @@ import (
 	"github.com/widasinnacy/distributed-collector/internal/kafka"
 	"github.com/widasinnacy/distributed-collector/internal/model"
 	"github.com/widasinnacy/distributed-collector/internal/pipeline"
+	"github.com/widasinnacy/distributed-collector/internal/telemetry"
 )
 
 func main() {
@@ -86,6 +87,16 @@ func main() {
 		producer.Send(cfg.OutputTopic, []byte(event.Service), output, headers)
 		return output, nil
 	})
+	if err := telemetry.InitMetrics(); err != nil {
+		slog.Error("failed to init metrics", "error", err)
+		os.Exit(1)
+	}
+	if shutdown, err := telemetry.Init(ctx, cfg.ServiceName, cfg.OTelEndpoint); err != nil {
+		slog.Warn("tracing disabled", "error", err)
+	} else {
+		defer shutdown(context.Background())
+	}
+	pool.Instrument(cfg.ServiceName)
 	pool.Start(ctx)
 
 	consumer, err := kafka.NewConsumer(cfg.KafkaBrokers, cfg.ConsumerGroup, []string{cfg.InputTopic})

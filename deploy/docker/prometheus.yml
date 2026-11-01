@@ -2,10 +2,10 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
+  # DNS discovery so every replica (deploy.replicas: 2) is scraped, not one at random.
   - job_name: "pipeline-services"
-    static_configs:
-      - targets:
-          - "validator:8081"
-          - "enricher:8081"
-          - "aggregator:8081"
-          - "raw-store-writer:8081"
+    dns_sd_configs:
+      - names: ["validator", "enricher", "aggregator", "raw-store-writer"]
+        type: A
+        port: 8081
+        refresh_interval: 15s

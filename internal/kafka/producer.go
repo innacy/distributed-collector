@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/IBM/sarama"
 )
@@ -24,7 +25,22 @@ func NewProducer(brokers []string) (*Producer, error) {
 		return nil, fmt.Errorf("new async producer: %w", err)
 	}
 
-	return &Producer{async: async}, nil
+	return wrapProducer(async), nil
+}
+
+// wrapProducer drains Successes/Errors: with Return.* enabled, sarama blocks
+// Input() once these channels fill unless someone reads them.
+func wrapProducer(async sarama.AsyncProducer) *Producer {
+	go func() {
+		for range async.Successes() {
+		}
+	}()
+	go func() {
+		for err := range async.Errors() {
+			slog.Error("kafka produce failed", "topic", err.Msg.Topic, "error", err.Err)
+		}
+	}()
+	return &Producer{async: async}
 }
 
 func (p *Producer) Send(topic string, key, value []byte, headers map[string]string) error {

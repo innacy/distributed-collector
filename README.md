@@ -31,7 +31,7 @@ See [docs/architecture.md](docs/architecture.md) for detailed system design, dat
 
 ## Quick Start
 
-**Prerequisites:** Docker, Docker Compose, and Go 1.22+ (for local builds).
+**Prerequisites:** Docker, Docker Compose, and Go 1.25.8+ (for local builds).
 
 ```bash
 git clone https://github.com/widasinnacy/distributed-collector.git
@@ -46,25 +46,44 @@ make up
 # Prometheus: http://localhost:9090
 ```
 
-Import the pre-built dashboard in Grafana:
+Grafana is provisioned automatically: the Prometheus datasource and the pipeline dashboard (`dashboards/grafana-pipeline.json`) load on startup — open **Dashboards → pipeline**.
 
-1. Go to **Dashboards → New → Import**
-2. Upload `dashboards/grafana-pipeline.json`
-3. Select the Prometheus datasource
+### Host ports
+
+Kafka and MongoDB are published on non-default host ports so they don't clash with a locally installed Kafka/MongoDB. Inside the Docker network services use the standard ports.
+
+| Service | Host | Inside Docker network |
+|---------|------|-----------------------|
+| Kafka | `localhost:9082` | `kafka:29092` |
+| MongoDB | `localhost:27027` | `mongodb:27017` |
+| Prometheus | `localhost:9090` | `prometheus:9090` |
+| Grafana | `localhost:3000` | — |
+| Jaeger UI / OTLP | `localhost:16686` / `4317` | `jaeger:4317` |
+| Service `/metrics`, `/health` | — | `<service>:8081` |
+
+Pipeline services wait for the Kafka healthcheck before starting. ZooKeeper is internal only.
 
 ## Run Load Test
 
 Generate synthetic log traffic through the full pipeline:
 
 ```bash
-docker compose -f deploy/docker/docker-compose.yaml --profile loadtest up loadgen
+# loadgen sits behind the `loadtest` profile, so `up --build` does NOT rebuild it — build it explicitly
+docker compose -f deploy/docker/docker-compose.yaml --profile loadtest build loadgen
+docker compose -f deploy/docker/docker-compose.yaml --profile loadtest up --force-recreate loadgen
+```
+
+Check events are flowing (every stage should report a non-zero rate):
+
+```bash
+curl -s localhost:9090/api/v1/query --data-urlencode 'query=sum by (stage)(rate(pipeline_events_processed_total[1m]))'
 ```
 
 For higher throughput locally:
 
 ```bash
 make build
-./bin/loadgen --mode=steady --rate=100000 --duration=60s --kafka-brokers=localhost:9092 --topic=raw-logs
+./bin/loadgen --mode=steady --rate=100000 --duration=60s --kafka-brokers=localhost:9082 --topic=raw-logs
 ```
 
 Load generator modes: `steady`, `burst`, `ramp`, `chaos`, and `vegeta` (HTTP ingestion). See `cmd/loadgen/main.go` for all flags.
@@ -73,7 +92,7 @@ Load generator modes: `steady`, `burst`, `ramp`, `chaos`, and `vegeta` (HTTP ing
 
 | Component | Technology |
 |-----------|------------|
-| Language | Go 1.22+ |
+| Language | Go 1.25.8+ |
 | Messaging | Apache Kafka (IBM Sarama client) |
 | Database | MongoDB 7 (mongo-driver v2) |
 | Tracing | OpenTelemetry SDK + Jaeger |
@@ -97,7 +116,7 @@ MongoDB handles two write patterns well: high-volume append-only inserts (raw lo
 
 ### Partition Strategy
 
-Ingestion topics (`raw-logs`, `validated-logs`, `enriched-logs`) use 12 partitions keyed by service name. This balances load across consumers while preserving per-service ordering. DLQ topics use 3 partitions — lower volume, less parallelism needed.
+Ingestion topics (`raw-logs`, `validated-logs`, `enriched-logs`) use 12 partitions keyed by service name. This balances load across consumers while preserving per-service ordering. DLQ topics use 3 partitions — lower volume, less parallelism needed. (In Docker Compose, topics are auto-created with `KAFKA_NUM_PARTITIONS: 12`, so DLQs get 12 there too.)
 
 ### Concurrency & Backpressure
 
@@ -115,7 +134,7 @@ Failed events are wrapped in a structured DLQ envelope with error classification
 
 ### Observability
 
-W3C Trace Context propagates through Kafka message headers. Each service creates an OpenTelemetry span, producing end-to-end traces in Jaeger. Seven pipeline metrics (throughput, latency, lag, DLQ rate, MongoDB write duration, worker utilization) feed a pre-built Grafana dashboard.
+W3C Trace Context propagates through Kafka message headers. Each service creates an OpenTelemetry span, producing end-to-end traces in Jaeger. Metrics are exported via the OpenTelemetry Prometheus exporter on each service's `:8081/metrics`; Prometheus discovers every replica via DNS. Currently recorded: `pipeline_events_processed_total{stage,status}` and `pipeline_event_latency_seconds` (throughput, error rate, latency panels). Consumer lag, worker utilization, DLQ rate, and MongoDB write duration are defined in `internal/telemetry/metrics.go` but not yet recorded, so those panels stay empty.
 
 ## Repository Structure
 
@@ -188,6 +207,16 @@ make bench
 ```
 
 After running a load test, open the Grafana dashboard to view real-time throughput, latency percentiles, consumer lag, and DLQ rates.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---------|-------------|
+| `go.mod requires go >= 1.25.8` during build | Dockerfiles must use `golang:1.25-alpine` or newer. |
+| loadgen: `connection refused` to `kafka:29092` | Kafka still starting; services now wait on its healthcheck. Retry once `docker compose ps` shows kafka `(healthy)`. |
+| `network ... not found` when starting loadgen | Stale loadgen container from before `down`. Use `--force-recreate`, and tear down with `--profile loadtest down`. |
+| Prometheus targets up, but dashboard shows 0 / no data | loadgen image is stale — rebuild it with `--profile loadtest build loadgen`. Consumers start at the newest offset, so messages produced before they joined are skipped. |
+| ~50% of events in `dlq-enrich-failed` | loadgen emits 20 services, `configs/service-registry.yaml` lists 10; unknown services fail enrichment. |
 
 ## License
 

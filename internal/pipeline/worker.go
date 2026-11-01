@@ -3,6 +3,11 @@ package pipeline
 import (
 	"context"
 	"sync"
+	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type ProcessFunc func(ctx context.Context, msg []byte) ([]byte, error)
@@ -31,6 +36,28 @@ func NewWorkerPool(workers, bufferSize int, process ProcessFunc) *WorkerPool {
 
 func (wp *WorkerPool) SetResultHandler(fn ResultFunc) {
 	wp.onResult = fn
+}
+
+// Instrument records pipeline_events_processed_total{stage,service,status} and
+// pipeline_event_latency_seconds for every processed message. Call before Start.
+func (wp *WorkerPool) Instrument(stage string) {
+	meter := otel.Meter(stage)
+	processed, _ := meter.Int64Counter("pipeline_events_processed_total")
+	latency, _ := meter.Float64Histogram("pipeline_event_latency_seconds")
+	inner := wp.process
+	ok := metric.WithAttributes(attribute.String("stage", stage), attribute.String("service", stage), attribute.String("status", "success"))
+	fail := metric.WithAttributes(attribute.String("stage", stage), attribute.String("service", stage), attribute.String("status", "error"))
+	wp.process = func(ctx context.Context, msg []byte) ([]byte, error) {
+		start := time.Now()
+		out, err := inner(ctx, msg)
+		attrs := ok
+		if err != nil {
+			attrs = fail
+		}
+		processed.Add(ctx, 1, attrs)
+		latency.Record(ctx, time.Since(start).Seconds(), attrs)
+		return out, err
+	}
 }
 
 func (wp *WorkerPool) Start(ctx context.Context) {

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Service struct {
@@ -39,6 +41,7 @@ func (s *Service) Addr() string {
 func (s *Service) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.Handle("/metrics", promhttp.Handler())
 
 	var err error
 	s.mu.Lock()
