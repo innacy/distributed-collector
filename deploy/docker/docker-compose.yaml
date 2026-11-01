@@ -1,0 +1,145 @@
+# deploy/docker/docker-compose.yaml
+version: "3.9"
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9082:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  mongodb:
+    image: mongo:7.0
+    ports:
+      - "27027:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.56
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ../../dashboards:/etc/grafana/provisioning/dashboards
+
+  validator:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.validator
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      INPUT_TOPIC: raw-logs
+      OUTPUT_TOPIC: validated-logs
+      DLQ_TOPIC: dlq-invalid
+      CONSUMER_GROUP: validator-group
+      OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
+      SERVICE_NAME: validator
+    deploy:
+      replicas: 2
+
+  enricher:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.enricher
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      INPUT_TOPIC: validated-logs
+      OUTPUT_TOPIC: enriched-logs
+      DLQ_TOPIC: dlq-enrich-failed
+      CONSUMER_GROUP: enricher-group
+      SERVICE_REGISTRY_PATH: /configs/service-registry.yaml
+      OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
+      SERVICE_NAME: enricher
+    deploy:
+      replicas: 2
+
+  aggregator:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.aggregator
+    depends_on:
+      - kafka
+      - mongodb
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      INPUT_TOPIC: enriched-logs
+      CONSUMER_GROUP: aggregator-group
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DATABASE: distributed-collector
+      OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
+      SERVICE_NAME: aggregator
+      FLUSH_INTERVAL_SEC: "10"
+
+  raw-store-writer:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.raw-store-writer
+    depends_on:
+      - kafka
+      - mongodb
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      INPUT_TOPIC: enriched-logs
+      CONSUMER_GROUP: raw-store-writer-group
+      DLQ_TOPIC: dlq-write-failed
+      MONGO_URI: mongodb://mongodb:27027
+      MONGO_DATABASE: distributed-collector
+      OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
+      SERVICE_NAME: raw-store-writer
+      BATCH_SIZE: "1000"
+      FLUSH_INTERVAL_SEC: "5"
+    deploy:
+      replicas: 2
+
+  loadgen:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.loadgen
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BROKERS: kafka:29092
+    command: ["--mode=steady", "--rate=10000", "--duration=300s", "--kafka-brokers=kafka:29092", "--topic=raw-logs"]
+    profiles:
+      - loadtest
+
+volumes:
+  mongo-data:

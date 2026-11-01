@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validator
+  namespace: distributed-collector
+  labels:
+    app: validator
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: validator
+  template:
+    metadata:
+      labels:
+        app: validator
+    spec:
+      containers:
+        - name: validator
+          image: distributed-collector-validator:latest
+          envFrom:
+            - configMapRef:
+                name: pipeline-config
+          env:
+            - name: SERVICE_NAME
+              value: "validator"
+            - name: CONSUMER_GROUP
+              value: "validator-group"
+            - name: INPUT_TOPIC
+              value: "raw-logs"
+            - name: OUTPUT_TOPIC
+              value: "validated-logs"
+            - name: DLQ_TOPIC
+              value: "dlq-invalid"
+            - name: HTTP_PORT
+              value: "8081"
+          ports:
+            - containerPort: 8081
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: validator-hpa
+  namespace: distributed-collector
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: validator
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: pipeline_consumer_lag
+        target:
+          type: AverageValue
+          averageValue: "10000"
